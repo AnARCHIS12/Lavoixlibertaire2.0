@@ -214,7 +214,7 @@ const antiRaid = {
       return { allowed: false, reason: 'Trop de nouveaux membres. Patientez quelques minutes.' };
     }
     
-    return { allowed: true };
+    return { allowed: true, reason: 'Le compte remplit tous les critères de sécurité.' };
   },
   
   canTakeTest: function(guildId, userId) {
@@ -910,15 +910,13 @@ client.on('interactionCreate', async interaction => {
 client.on('guildMemberAdd', async member => {
   const joinCheck = antiRaid.canJoin(member);
   
-  if (!joinCheck.allowed) {
-    try {
-      await member.send(`Accès refusé: ${joinCheck.reason}`);
-      await member.kick(joinCheck.reason);
-      return;
-    } catch (error) {
-      console.error('Erreur lors du kick:', error);
-    }
-  }
+  const embed = new EmbedBuilder()
+    .setColor(joinCheck.allowed ? '#00FF00' : '#FF0000')
+    .setTitle('Nouveau membre')
+    .setDescription(`${member.user.tag} a rejoint le serveur\n\n**Statut**: ${joinCheck.allowed ? 'Accepté' : 'Refusé'}\n**Raison**: ${joinCheck.allowed ? 'Le compte remplit tous les critères de sécurité.' : joinCheck.reason}`)
+    .setTimestamp();
+  
+  await sendLog(member.guild, embed);
   
   try {
     // Vérifier la configuration
@@ -1394,5 +1392,61 @@ const sendQuestion = async (member, questionIndex, guildId) => {
     activeQuestions.delete(`${guildId}-${member?.id}`);
   }
 };
+
+const addQuestionCommand = new SlashCommandBuilder()
+  .setName('addquestion')
+  .setDescription('Ajoute une nouvelle question au test')
+  .addStringOption(option =>
+    option.setName('question')
+      .setDescription('La question à ajouter')
+      .setRequired(true));
+
+commands.push(addQuestionCommand);
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isCommand()) return;
+
+  const { commandName, guildId } = interaction;
+  const config = getServerConfig(guildId);
+
+  try {
+    if (commandName === 'addquestion') {
+      if (!interaction.member.permissions.has('ADMINISTRATOR')) {
+        await interaction.reply({
+          content: 'Seuls les administrateurs peuvent ajouter des questions.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const newQuestion = interaction.options.getString('question');
+      config.questions = config.questions || [];
+      config.questions.push(newQuestion);
+      
+      // Sauvegarder la configuration
+      saveConfigs();
+      
+      // Envoyer un log
+      const embed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('Nouvelle question ajoutée')
+        .setDescription(newQuestion)
+        .setTimestamp();
+      
+      await sendLog(interaction.guild, embed);
+      
+      await interaction.reply({
+        content: 'Question ajoutée avec succès !',
+        ephemeral: true
+      });
+    }
+  } catch (error) {
+    console.error(error);
+    await interaction.reply({
+      content: 'Une erreur est survenue.',
+      ephemeral: true
+    });
+  }
+});
 
 client.login(token);
