@@ -118,5 +118,4 @@ Le système attribue des points selon :
 - Système de permissions hiérarchique
 - Commandes administratives protégées
 - Validation des configurations
-# Lavoixlibertaire2.0
-# Lavoixlibertaire2.0
+
