@@ -25,41 +25,74 @@ const defaultQuestions = config.defaultQuestions;
 const scoreThresholds = config.scoreThresholds;
 const penalites = config.penalites;
 
-// Map pour stocker les questions actives
-const activeQuestions = new Map();
-const userResponses = new Map();
+// Structure de configuration par serveur
+const defaultConfig = {
+  channelId: null,
+  logChannelId: null,
+  roles: {
+    droite: null,
+    gauche: null,
+    quarantaine: null
+  },
+  questions: defaultQuestions,
+  activeTests: 0,
+  totalTests: 0
+};
 
-// Fonction pour obtenir une question aléatoire d'une catégorie
-function getRandomQuestion(category) {
-  const questions = config.questions[category];
-  return questions[Math.floor(Math.random() * questions.length)];
-}
+// Map pour stocker les données par serveur
+const serverData = new Map();
 
-// Fonction pour obtenir un ensemble de questions pour le test
-function generateQuestionSet(numberOfQuestions = 10) {
-  const categories = Object.keys(config.questions);
-  let questions = [];
-  
-  // Assurer au moins une question par catégorie principale
-  categories.forEach(category => {
-    questions.push({
-      category: category,
-      question: getRandomQuestion(category)
-    });
-  });
-  
-  // Compléter avec des questions aléatoires si nécessaire
-  while (questions.length < numberOfQuestions) {
-    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-    questions.push({
-      category: randomCategory,
-      question: getRandomQuestion(randomCategory)
+function getServerData(guildId) {
+  if (!serverData.has(guildId)) {
+    serverData.set(guildId, {
+      activeQuestions: new Map(),
+      userResponses: new Map(),
+      lastCommandTime: new Map(),
+      lastMessageTime: new Map()
     });
   }
-  
-  // Mélanger les questions
-  return questions.sort(() => Math.random() - 0.5);
+  return serverData.get(guildId);
 }
+
+// Fonction pour générer un ensemble de questions aléatoires pour un serveur
+const generateQuestionSet = (guildId) => {
+  const allQuestions = [...defaultQuestions]; // Copie des questions par défaut
+  const serverQuestions = [];
+  const numberOfQuestions = 10; // Nombre de questions par test
+  
+  // Mélanger les questions de manière aléatoire
+  for (let i = allQuestions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allQuestions[i], allQuestions[j]] = [allQuestions[j], allQuestions[i]];
+  }
+  
+  // Sélectionner les premières X questions
+  return allQuestions.slice(0, numberOfQuestions);
+};
+
+// Fonction pour obtenir la configuration d'un serveur
+const getServerConfig = (guildId) => {
+  if (!serverConfigs.servers) {
+    serverConfigs.servers = {};
+  }
+  
+  if (!serverConfigs.servers[guildId]) {
+    serverConfigs.servers[guildId] = {
+      ...defaultConfig,
+      questions: generateQuestionSet(guildId)
+    };
+    saveConfigs();
+  }
+
+  // Si les questions n'existent pas, les générer
+  if (!serverConfigs.servers[guildId].questions || 
+      serverConfigs.servers[guildId].questions.length === 0) {
+    serverConfigs.servers[guildId].questions = generateQuestionSet(guildId);
+    saveConfigs();
+  }
+
+  return serverConfigs.servers[guildId];
+};
 
 // Chemin vers le fichier de configuration
 const CONFIG_FILE = path.join(__dirname, 'config.json');
@@ -86,29 +119,6 @@ const saveConfigs = () => {
   }
 };
 
-// Fonction pour obtenir la configuration d'un serveur
-const getServerConfig = (guildId) => {
-  if (!serverConfigs.servers) {
-    serverConfigs.servers = {};
-  }
-  
-  if (!serverConfigs.servers[guildId]) {
-    serverConfigs.servers[guildId] = {
-      channelId: null,
-      logChannelId: null,  // Ajout du canal de logs
-      roles: {
-        droite: null,
-        gauche: null
-      },
-      questions: generateQuestionSet(10),
-      activeTests: 0,
-      totalTests: 0
-    };
-    saveConfigs();
-  }
-  return serverConfigs.servers[guildId];
-};
-
 // Fonction pour valider la configuration d'un serveur
 const validateConfig = (guildId) => {
   const config = getServerConfig(guildId);
@@ -125,7 +135,7 @@ const validateConfig = (guildId) => {
   }
 
   // Vérifier les rôles
-  if (!config.roles.droite || !config.roles.gauche) {
+  if (!config.roles.droite || !config.roles.gauche || !config.roles.quarantaine) {
     errors.push('Rôles non configurés (/setroles)');
   }
 
@@ -154,28 +164,64 @@ const validateLogChannel = async (guild, config) => {
 };
 
 // Fonction pour envoyer un log
-const sendLog = async (guild, embed) => {
-  const config = getServerConfig(guild.id);
-  
-  if (!config.logChannelId) {
-    console.warn(`Pas de canal de logs configuré pour le serveur ${guild.id}`);
-    return false;
-  }
-
+async function sendLog(guild, embed) {
   try {
-    const logChannel = await guild.channels.fetch(config.logChannelId);
-    if (!logChannel || !logChannel.isTextBased()) {
-      console.warn(`Canal de logs invalide pour le serveur ${guild.id}`);
-      return false;
-    }
+    const config = getServerConfig(guild.id);
+    if (!config.logChannelId) return;
 
-    await logChannel.send({ embeds: [embed] });
-    return true;
+    const logChannel = guild.channels.cache.get(config.logChannelId);
+    if (logChannel) {
+      await logChannel.send({ embeds: [embed] });
+    }
   } catch (error) {
-    console.error(`Erreur lors de l'envoi du log pour le serveur ${guild.id}:`, error);
-    return false;
+    console.error('Erreur lors de l\'envoi du log:', error);
   }
-};
+}
+
+// Fonction pour envoyer les logs de configuration
+async function logConfigChange(guild, user, action, details) {
+  const embed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('📝 Modification de Configuration')
+    .setDescription(`Action: ${action}`)
+    .addFields(
+      { name: 'Détails', value: details },
+      { name: 'Par', value: `<@${user.id}>` }
+    )
+    .setTimestamp();
+
+  await sendLog(guild, embed);
+}
+
+// Fonction pour les logs de test
+async function logTestAction(guild, user, action, details) {
+  const embed = new EmbedBuilder()
+    .setColor('#00FF00')
+    .setTitle('🎯 Action de Test')
+    .setDescription(`Utilisateur: <@${user.id}>`)
+    .addFields(
+      { name: 'Action', value: action },
+      { name: 'Détails', value: details }
+    )
+    .setTimestamp();
+
+  await sendLog(guild, embed);
+}
+
+// Fonction pour les logs de sécurité
+async function logSecurityEvent(guild, user, reason, details) {
+  const embed = new EmbedBuilder()
+    .setColor('#FF0000')
+    .setTitle('🚨 Alerte de Sécurité')
+    .setDescription(`Utilisateur: <@${user.id}>`)
+    .addFields(
+      { name: 'Raison', value: reason },
+      { name: 'Détails', value: details }
+    )
+    .setTimestamp();
+
+  await sendLog(guild, embed);
+}
 
 // Modifier la gestion des questions actives pour supporter plusieurs serveurs
 const antiRaid = {
@@ -205,8 +251,27 @@ const antiRaid = {
     }
     
     const accountAge = now - member.user.createdTimestamp;
-    if (accountAge < 3 * 24 * 60 * 60 * 1000) {
-      return { allowed: false, reason: 'Votre compte doit avoir au moins 3 jours d\'ancienneté.' };
+    if (accountAge < 7 * 24 * 60 * 60 * 1000) {
+      // Attribuer le rôle quarantaine
+      const config = getServerConfig(member.guild.id);
+      if (config && config.roles.quarantaine) {
+        member.roles.add(config.roles.quarantaine).catch(console.error);
+        
+        // Créer un embed pour le log
+        const embed = new EmbedBuilder()
+          .setColor('#FF0000')
+          .setTitle('⚠️ Compte Suspect Détecté')
+          .setDescription(`Le membre ${member.user.tag} a été mis en quarantaine.`)
+          .addFields(
+            { name: 'Raison', value: 'Compte trop récent' },
+            { name: 'Age du compte', value: `${Math.floor(accountAge / (24 * 60 * 60 * 1000))} jours` }
+          )
+          .setTimestamp();
+
+        // Envoyer le log
+        sendLog(member.guild, embed);
+      }
+      return false;
     }
     
     serverData.joinCount++;
@@ -256,6 +321,15 @@ const antiRaid = {
     recentMessages.push(now);
     serverData.spamProtection.set(userId, recentMessages);
     
+    if (recentMessages.length > 3) {
+      const guild = client.guilds.cache.get(guildId);
+      const user = client.users.cache.get(userId);
+      if (guild && user) {
+        logSecurityEvent(guild, user, 'Spam Détecté', 
+          `${recentMessages.length} messages en ${10000 / 1000} secondes`);
+      }
+    }
+    
     return recentMessages.length > 3;
   }
 };
@@ -263,49 +337,61 @@ const antiRaid = {
 const commands = [
   new SlashCommandBuilder()
     .setName('setchannel')
-    .setDescription('Définir le salon pour le test politique')
+    .setDescription('☭ Désignez le canal officiel pour l\'évaluation idéologique des camarades')
     .addChannelOption(option =>
-      option.setName('channel')
-        .setDescription('Le canal où le test sera effectué')
-        .setRequired(true)),
+      option
+        .setName('channel')
+        .setDescription('Le canal de la révolution numérique')
+        .setRequired(true)
+    ),
   new SlashCommandBuilder()
     .setName('setlogs')
-    .setDescription('Définir le salon pour les logs de modération')
-    .addChannelOption(option => 
-      option.setName('channel')
-        .setDescription('Le salon pour les logs')
+    .setDescription('☭ Établissez le canal des archives du Parti')
+    .addChannelOption(option =>
+      option
+        .setName('channel')
+        .setDescription('Le canal des archives révolutionnaires')
         .setRequired(true)
     ),
   new SlashCommandBuilder()
     .setName('setroles')
-    .setDescription('Définir les rôles pour le test politique')
-    .addRoleOption(option => 
-      option.setName('droite')
-        .setDescription('Le rôle pour la droite')
+    .setDescription('☭ Configurez les rôles idéologiques du collectif')
+    .addRoleOption(option =>
+      option
+        .setName('droite')
+        .setDescription('Rôle pour les éléments réactionnaires')
         .setRequired(true)
     )
-    .addRoleOption(option => 
-      option.setName('gauche')
-        .setDescription('Le rôle pour la gauche')
+    .addRoleOption(option =>
+      option
+        .setName('gauche')
+        .setDescription('Rôle pour les camarades progressistes')
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option
+        .setName('quarantaine')
+        .setDescription('Rôle pour les comptes suspects')
         .setRequired(true)
     ),
   new SlashCommandBuilder()
     .setName('start')
-    .setDescription('Démarrer le questionnaire'),
+    .setDescription('☭ Lancez l\'évaluation idéologique révolutionnaire'),
   new SlashCommandBuilder()
     .setName('questions')
-    .setDescription('Gérer les questions du test politique')
+    .setDescription('☭ Gérez les questions du test politique')
     .addSubcommand(subcommand =>
       subcommand
         .setName('list')
-        .setDescription('Voir la liste des questions actuelles')
+        .setDescription('☭ Voir la liste des questions actuelles')
     )
     .addSubcommand(subcommand =>
       subcommand
         .setName('add')
-        .setDescription('Ajouter une nouvelle question')
+        .setDescription('☭ Ajouter une nouvelle question')
         .addStringOption(option =>
-          option.setName('question')
+          option
+            .setName('question')
             .setDescription('La question à ajouter')
             .setRequired(true)
         )
@@ -313,9 +399,10 @@ const commands = [
     .addSubcommand(subcommand =>
       subcommand
         .setName('remove')
-        .setDescription('Supprimer une question')
+        .setDescription('☭ Supprimer une question')
         .addIntegerOption(option =>
-          option.setName('index')
+          option
+            .setName('index')
             .setDescription('L\'index de la question à supprimer (commence à 1)')
             .setRequired(true)
             .setMinValue(1)
@@ -323,45 +410,28 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName('resetconfig')
-    .setDescription('Réinitialiser la configuration du serveur')
-    .addBooleanOption(option =>
-      option.setName('confirm')
-        .setDescription('Confirmer la réinitialisation')
-        .setRequired(true)
-    ),
+    .setDescription('☭ Réinitialisez la configuration du Parti Digital'),
   new SlashCommandBuilder()
     .setName('status')
-    .setDescription('Voir l\'état du bot sur ce serveur'),
+    .setDescription('☭ Voir l\'état du bot sur ce serveur'),
   new SlashCommandBuilder()
     .setName('test')
-    .setDescription('Lancer manuellement le test politique pour un membre')
+    .setDescription('☭ Administrez le test idéologique à un camarade')
     .addUserOption(option =>
-      option.setName('membre')
-        .setDescription('Le membre à tester')
-        .setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('addquestion')
-    .setDescription('Ajoute une nouvelle question au test politique')
-    .addStringOption(option =>
-      option.setName('question')
-        .setDescription('La question à ajouter')
+      option
+        .setName('user')
+        .setDescription('Le camarade à évaluer')
         .setRequired(true)
     ),
-  new SlashCommandBuilder()
-    .setName('removequestion')
-    .setDescription('Supprime une question du test politique')
-    .addIntegerOption(option =>
-      option.setName('numero')
-        .setDescription('Le numéro de la question à supprimer')
-        .setRequired(true)
-        .setMinValue(1)
-    ),
-  new SlashCommandBuilder()
-    .setName('listquestions')
-    .setDescription('Liste toutes les questions actuelles'),
   new SlashCommandBuilder()
     .setName('resetquestions')
-    .setDescription('Réinitialise les questions aux questions par défaut d\'extrême gauche')
+    .setDescription('☭ Réinitialisez les questions aux questions par défaut d\'extrême gauche'),
+  new SlashCommandBuilder()
+    .setName('regeneratequestions')
+    .setDescription('☭ Générer un nouveau set de questions pour ce serveur'),
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('☭ Guide de configuration et d\'utilisation du bot'),
 ];
 
 const rest = new REST({ version: '9' }).setToken(token);
@@ -389,29 +459,50 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
 
   const { commandName, guildId } = interaction;
+  
+  // Vérifier si la configuration du serveur existe
+  if (!serverConfigs.servers[guildId]) {
+    serverConfigs.servers[guildId] = defaultConfig;
+    saveConfigs();
+  }
+  
   const config = getServerConfig(guildId);
-
+  
   try {
     if (commandName === 'setchannel') {
       if (!interaction.member.permissions.has('MANAGE_GUILD')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer le serveur.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
       const channel = interaction.options.getChannel('channel');
+      if (!channel) {
+        await interaction.reply({
+          content: 'Veuillez spécifier un canal valide.',
+          flags: [1 << 6]
+        });
+        return;
+      }
+
       config.channelId = channel.id;
       saveConfigs();
-      
-      await interaction.reply(`Canal configuré sur ${channel}`);
+
+      await interaction.reply({
+        content: `Le canal de test a été configuré sur ${channel}.`,
+        flags: [1 << 6]
+      });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Configuration du Canal', 
+        `Canal de test défini: <#${channel.id}>`);
     }
     else if (commandName === 'setlogs') {
       if (!interaction.member.permissions.has('MANAGE_GUILD')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer le serveur.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -422,7 +513,7 @@ client.on('interactionCreate', async interaction => {
       if (!channel.isTextBased()) {
         await interaction.reply({
           content: 'Le canal doit être un canal textuel.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -432,7 +523,7 @@ client.on('interactionCreate', async interaction => {
       if (!permissions.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) {
         await interaction.reply({
           content: 'Je n\'ai pas les permissions nécessaires dans ce canal. J\'ai besoin de : Voir le salon, Envoyer des messages, Intégrer des liens.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -451,12 +542,12 @@ client.on('interactionCreate', async interaction => {
         .setDescription(`Les logs de modération seront envoyés dans ${channel}`)
         .addFields(
           { name: 'ID du canal', value: channel.id },
-          { name: 'Configuré par', value: interaction.member.toString() }
+          { name: 'Configuré par', value: `<@${interaction.user.id}>` }
         )
         .setTimestamp();
 
       // Envoyer la confirmation
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: [1 << 6] });
 
       // Si il y avait un ancien canal, envoyer un message de transition
       if (oldLogChannelId) {
@@ -492,47 +583,67 @@ client.on('interactionCreate', async interaction => {
             .setTimestamp()
         ]
       });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Configuration du Canal de Logs', 
+        `Canal de logs défini: <#${channel.id}>`);
     }
     else if (commandName === 'setroles') {
       if (!interaction.member.permissions.has('MANAGE_GUILD')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer le serveur.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
-      const droite = interaction.options.getRole('droite');
-      const gauche = interaction.options.getRole('gauche');
+      const droiteRole = interaction.options.getRole('droite');
+      const gaucheRole = interaction.options.getRole('gauche');
+      const quarantaineRole = interaction.options.getRole('quarantaine');
       
-      config.roles.droite = droite.id;
-      config.roles.gauche = gauche.id;
+      config.roles = {
+        droite: droiteRole.id,
+        gauche: gaucheRole.id,
+        quarantaine: quarantaineRole.id
+      };
       saveConfigs();
       
-      await interaction.reply(`Rôles configurés : Droite = ${droite}, Gauche = ${gauche}`);
+      const embed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('Configuration des rôles')
+        .addFields(
+          { name: 'Rôle Droite', value: `<@&${droiteRole.id}>` },
+          { name: 'Rôle Gauche', value: `<@&${gaucheRole.id}>` },
+          { name: 'Rôle Quarantaine', value: `<@&${quarantaineRole.id}>` }
+        );
+
+      await interaction.reply({ embeds: [embed], flags: [1 << 6] });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Configuration des Rôles', 
+        `Rôle Gauche: <@&${gaucheRole.id}>\nRôle Droite: <@&${droiteRole.id}>\nRôle Quarantaine: <@&${quarantaineRole.id}>`);
     }
     else if (commandName === 'start') {
       if (!config.channelId) {
         await interaction.reply({
           content: 'Le canal pour le test n\'a pas été configuré. Utilisez /setchannel d\'abord.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
       
-      if (!config.roles.droite || !config.roles.gauche) {
+      if (!config.roles.droite || !config.roles.gauche || !config.roles.quarantaine) {
         await interaction.reply({
           content: 'Les rôles n\'ont pas été configurés. Utilisez /setroles d\'abord.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
       const userKey = `${guildId}-${interaction.member.id}`;
-      if (activeQuestions.has(userKey)) {
+      const serverDataInstance = getServerData(guildId);
+      if (serverDataInstance.activeQuestions.has(userKey)) {
         await interaction.reply({
           content: 'Vous avez déjà un test en cours.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -540,7 +651,7 @@ client.on('interactionCreate', async interaction => {
       // Répondre immédiatement à l'interaction
       await interaction.reply({ 
         content: 'Le test va commencer...',
-        ephemeral: true 
+        flags: [1 << 6] 
       });
 
       // Envoyer le message de début de test dans le canal configuré
@@ -548,7 +659,7 @@ client.on('interactionCreate', async interaction => {
       if (channel) {
         const startEmbed = new EmbedBuilder()
           .setColor('#ff0000')
-          .setTitle('Début du test')
+          .setTitle('☭ Début du test')
           .setDescription(`${interaction.member}, votre test politique va commencer.`)
           .setFooter({ text: 'Préparez-vous à répondre aux questions' });
 
@@ -556,18 +667,21 @@ client.on('interactionCreate', async interaction => {
         
         // Attendre un peu avant d'envoyer la première question
         setTimeout(() => {
-          if (!activeQuestions.has(userKey)) {
+          if (!serverDataInstance.activeQuestions.has(userKey)) {
             sendQuestion(interaction.member, 0, guildId);
           }
         }, 2000);
       }
+
+      await logTestAction(interaction.guild, interaction.user, 'Début de Test', 
+        `Test commencé dans <#${config.channelId}>`);
     }
     else if (commandName === 'questions') {
       // Vérifier les permissions
       if (!interaction.member.permissions.has('MANAGE_GUILD')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer le serveur pour modifier les questions.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -579,10 +693,10 @@ client.on('interactionCreate', async interaction => {
           const questionsList = config.questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
           const embed = new EmbedBuilder()
             .setColor('#ff0000')  // Rouge
-            .setTitle('Questions du test politique')
+            .setTitle('☭ Questions du test politique')
             .setDescription(questionsList);
           
-          await interaction.reply({ embeds: [embed], ephemeral: true });
+          await interaction.reply({ embeds: [embed], flags: [1 << 6] });
           break;
         }
 
@@ -591,7 +705,7 @@ client.on('interactionCreate', async interaction => {
           if (config.questions.length >= 20) {
             await interaction.reply({
               content: 'Vous ne pouvez pas avoir plus de 20 questions.',
-              ephemeral: true
+              flags: [1 << 6]
             });
             return;
           }
@@ -601,7 +715,7 @@ client.on('interactionCreate', async interaction => {
           
           await interaction.reply({
             content: `Question ajoutée ! Nombre total de questions : ${config.questions.length}`,
-            ephemeral: true
+            flags: [1 << 6]
           });
           break;
         }
@@ -611,7 +725,7 @@ client.on('interactionCreate', async interaction => {
           if (index >= config.questions.length) {
             await interaction.reply({
               content: 'Ce numéro de question n\'existe pas.',
-              ephemeral: true
+              flags: [1 << 6]
             });
             return;
           }
@@ -619,7 +733,7 @@ client.on('interactionCreate', async interaction => {
           if (config.questions.length <= 5) {
             await interaction.reply({
               content: 'Vous devez garder au moins 5 questions.',
-              ephemeral: true
+              flags: [1 << 6]
             });
             return;
           }
@@ -629,7 +743,7 @@ client.on('interactionCreate', async interaction => {
           
           await interaction.reply({
             content: `Question supprimée : "${removed}"`,
-            ephemeral: true
+            flags: [1 << 6]
           });
           break;
         }
@@ -640,7 +754,7 @@ client.on('interactionCreate', async interaction => {
       if (!interaction.member.permissions.has('MANAGE_GUILD')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer le serveur pour réinitialiser la configuration.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -649,44 +763,38 @@ client.on('interactionCreate', async interaction => {
       if (!confirm) {
         await interaction.reply({
           content: 'La réinitialisation a été annulée.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
       // Réinitialiser la configuration
-      serverConfigs.servers[guildId] = {
-        channelId: null,
-        logChannelId: null,  // Ajout du canal de logs
-        roles: {
-          droite: null,
-          gauche: null
-        },
-        questions: generateQuestionSet(10),
-        activeTests: 0,
-        totalTests: 0
-      };
+      serverConfigs.servers[guildId] = defaultConfig;
       
       // Sauvegarder la nouvelle configuration
       saveConfigs();
 
       // Nettoyer les questions actives et les réponses pour ce serveur
-      for (const [key, value] of activeQuestions.entries()) {
+      const serverDataInstance = getServerData(guildId);
+      for (const [key, value] of serverDataInstance.activeQuestions.entries()) {
         if (key.startsWith(`${guildId}-`)) {
-          activeQuestions.delete(key);
+          serverDataInstance.activeQuestions.delete(key);
         }
       }
       
-      for (const [key, value] of userResponses.entries()) {
+      for (const [key, value] of serverDataInstance.userResponses.entries()) {
         if (key.startsWith(`${guildId}-`)) {
-          userResponses.delete(key);
+          serverDataInstance.userResponses.delete(key);
         }
       }
 
       await interaction.reply({
         content: 'La configuration du serveur a été réinitialisée avec succès.',
-        ephemeral: true
+        flags: [1 << 6]
       });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Réinitialisation de la Configuration', 
+        'La configuration du serveur a été réinitialisée.');
     }
     else if (commandName === 'status') {
       const config = getServerConfig(interaction.guildId);
@@ -705,6 +813,8 @@ client.on('interactionCreate', async interaction => {
         interaction.guild.roles.cache.get(config.roles.gauche) : null;
       const roleDroite = config.roles.droite ? 
         interaction.guild.roles.cache.get(config.roles.droite) : null;
+      const roleQuarantaine = config.roles.quarantaine ? 
+        interaction.guild.roles.cache.get(config.roles.quarantaine) : null;
 
       const embed = new EmbedBuilder()
         .setColor(validation.isValid ? '#00FF00' : '#FF0000')
@@ -727,11 +837,11 @@ client.on('interactionCreate', async interaction => {
           },
           { 
             name: '🎭 Rôles', 
-            value: `Gauche: ${roleGauche ? `✅ (${roleGauche.name})` : '❌ Non configuré'}\nDroite: ${roleDroite ? `✅ (${roleDroite.name})` : '❌ Non configuré'}`
+            value: `Gauche: ${roleGauche ? `✅ (${roleGauche.name})` : '❌ Non configuré'}\nDroite: ${roleDroite ? `✅ (${roleDroite.name})` : '❌ Non configuré'}\nQuarantaine: ${roleQuarantaine ? `✅ (${roleQuarantaine.name})` : '❌ Non configuré'}`
           },
           {
             name: '❓ Questions',
-            value: `${config.questions.length} questions configurées`
+            value: `Total: ${config.questions.length}\nUniques: Oui\nExemples:\n${config.questions.slice(0, 2).join('\n')}`
           },
           {
             name: '📊 Statistiques',
@@ -749,23 +859,23 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: [1 << 6] });
     }
     else if (commandName === 'test') {
       // Vérifier les permissions de l'utilisateur
       if (!interaction.member.permissions.has('MANAGE_ROLES')) {
         await interaction.reply({
           content: 'Vous devez avoir la permission de gérer les rôles pour utiliser cette commande.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
-      const targetMember = interaction.options.getMember('membre');
+      const targetMember = interaction.options.getMember('user');
       if (!targetMember) {
         await interaction.reply({
           content: 'Membre introuvable.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -774,7 +884,7 @@ client.on('interactionCreate', async interaction => {
       if (!config.channelId) {
         await interaction.reply({
           content: 'Le canal pour le test n\'a pas été configuré. Utilisez /setchannel d\'abord.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -783,109 +893,39 @@ client.on('interactionCreate', async interaction => {
       if (!channel) {
         await interaction.reply({
           content: 'Le canal configuré n\'existe plus. Veuillez reconfigurer avec /setchannel.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
       // Vérifier si le membre n'a pas déjà un test en cours
       const userKey = `${guildId}-${targetMember.id}`;
-      if (activeQuestions.has(userKey)) {
+      const serverDataInstance = getServerData(guildId);
+      if (serverDataInstance.activeQuestions.has(userKey)) {
         await interaction.reply({
           content: 'Ce membre a déjà un test en cours.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
 
       await interaction.reply({
         content: `Le test va commencer pour ${targetMember}.`,
-        ephemeral: true
+        flags: [1 << 6]
       });
 
       // Lancer le test
       await sendQuestion(targetMember, 0, guildId);
-    }
-    else if (commandName === 'addquestion') {
-      // Vérifier les permissions
-      if (!interaction.member.permissions.has('ADMINISTRATOR')) {
-        await interaction.reply({
-          content: 'Seuls les administrateurs peuvent utiliser cette commande.',
-          ephemeral: true
-        });
-        return;
-      }
 
-      const newQuestion = interaction.options.getString('question');
-      const serverConfig = getServerConfig(interaction.guildId);
-      serverConfig.questions.push(newQuestion);
-      saveConfigs();
-      await interaction.reply({ 
-        content: `Question ajoutée: "${newQuestion}"`,
-        ephemeral: true 
-      });
-    }
-    else if (commandName === 'removequestion') {
-      // Vérifier les permissions
-      if (!interaction.member.permissions.has('ADMINISTRATOR')) {
-        await interaction.reply({
-          content: 'Seuls les administrateurs peuvent utiliser cette commande.',
-          ephemeral: true
-        });
-        return;
-      }
-
-      const index = interaction.options.getInteger('numero') - 1;
-      const serverConfig = getServerConfig(interaction.guildId);
-      
-      if (index < 0 || index >= serverConfig.questions.length) {
-        await interaction.reply({ 
-          content: `Numéro invalide. Utilisez un nombre entre 1 et ${serverConfig.questions.length}`,
-          ephemeral: true 
-        });
-        return;
-      }
-
-      const removedQuestion = serverConfig.questions.splice(index, 1)[0];
-      saveConfigs();
-      await interaction.reply({ 
-        content: `Question supprimée: "${removedQuestion}"`,
-        ephemeral: true 
-      });
-    }
-    else if (commandName === 'listquestions') {
-      // Vérifier les permissions
-      if (!interaction.member.permissions.has('ADMINISTRATOR')) {
-        await interaction.reply({
-          content: 'Seuls les administrateurs peuvent utiliser cette commande.',
-          ephemeral: true
-        });
-        return;
-      }
-
-      const guildConfig = getServerConfig(interaction.guildId);
-      let questionList = 'Questions actuelles:\n';
-      guildConfig.questions.forEach((question, idx) => {
-        questionList += `${idx + 1}. ${question}\n`;
-      });
-      
-      // Si la liste est trop longue, on la divise en plusieurs messages
-      if (questionList.length > 2000) {
-        const chunks = questionList.match(/.{1,2000}/g);
-        await interaction.reply({ content: chunks[0], ephemeral: true });
-        for (let i = 1; i < chunks.length; i++) {
-          await interaction.followUp({ content: chunks[i], ephemeral: true });
-        }
-      } else {
-        await interaction.reply({ content: questionList, ephemeral: true });
-      }
+      await logTestAction(interaction.guild, targetMember.user, 'Début de Test', 
+        `Test commencé pour ${targetMember.user.tag} dans <#${config.channelId}>`);
     }
     else if (commandName === 'resetquestions') {
       // Vérifier les permissions
       if (!interaction.member.permissions.has('ADMINISTRATOR')) {
         await interaction.reply({
           content: 'Seuls les administrateurs peuvent utiliser cette commande.',
-          ephemeral: true
+          flags: [1 << 6]
         });
         return;
       }
@@ -895,14 +935,81 @@ client.on('interactionCreate', async interaction => {
       saveConfigs();
       await interaction.reply({ 
         content: 'Questions réinitialisées aux questions par défaut d\'extrême gauche.',
-        ephemeral: true 
+        flags: [1 << 6] 
       });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Réinitialisation des Questions', 
+        'Questions réinitialisées aux questions par défaut d\'extrême gauche.');
+    }
+    else if (commandName === 'regeneratequestions') {
+      if (!interaction.member.permissions.has('MANAGE_GUILD')) {
+        await interaction.reply({
+          content: 'Vous devez avoir la permission de gérer le serveur.',
+          flags: [1 << 6]
+        });
+        return;
+      }
+
+      const oldQuestions = [...config.questions];
+      config.questions = generateQuestionSet(guildId);
+      
+      // Vérifier que les nouvelles questions sont différentes des anciennes
+      while (JSON.stringify(config.questions) === JSON.stringify(oldQuestions)) {
+        config.questions = generateQuestionSet(guildId);
+      }
+      
+      saveConfigs();
+
+      const embed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('☭ Questions Régénérées')
+        .setDescription('Un nouveau set de questions a été généré pour ce serveur.')
+        .addFields(
+          { name: 'Nombre de questions', value: `${config.questions.length}` },
+          { name: 'Exemple de questions', value: config.questions.slice(0, 3).join('\n') }
+        );
+
+      await interaction.reply({ embeds: [embed], flags: [1 << 6] });
+
+      await logConfigChange(interaction.guild, interaction.user, 'Régénération des Questions', 
+        `${config.questions.length} nouvelles questions générées`);
+    }
+    else if (commandName === 'help') {
+      const helpEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('☭ Guide du Bot Idéologique')
+        .setDescription('Guide de configuration et d\'utilisation du test idéologique')
+        .addFields(
+          { 
+            name: '1️⃣ Configuration initiale', 
+            value: '```\n1. /setchannel - Définir le salon pour passer le test\n2. /setlog - Définir le salon pour les logs\n3. /setroles - Configurer les rôles (Progressiste, Réactionnaire, Quarantaine)```'
+          },
+          {
+            name: '2️⃣ Commandes de gestion', 
+            value: '```\n/start - Démarrer un test\n/stop - Arrêter un test en cours\n/status - Vérifier la configuration\n/reset - Réinitialiser la configuration```'
+          },
+          {
+            name: '3️⃣ Sécurité', 
+            value: '• Les comptes de moins de 7 jours reçoivent automatiquement le rôle Quarantaine\n• Le spam est automatiquement détecté et bloqué'
+          },
+          {
+            name: '4️⃣ Fonctionnement du test', 
+            value: '• Les réponses sont analysées automatiquement\n• Le score final est affiché en pourcentage\n• 100% Progressiste = Extrême gauche\n• 100% Réactionnaire = Extrême droite'
+          },
+          {
+            name: '⚠️ Important', 
+            value: 'Assurez-vous que le bot a les permissions nécessaires :\n• Gérer les rôles\n• Voir et envoyer des messages\n• Gérer les messages'
+          }
+        )
+        .setFooter({ text: 'Pour plus d\'aide, contactez les administrateurs' });
+
+      await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
     }
   } catch (error) {
     console.error(error);
     await interaction.reply({
       content: 'Une erreur est survenue.',
-      ephemeral: true
+      flags: [1 << 6]
     });
   }
 });
@@ -947,7 +1054,8 @@ client.on('guildMemberAdd', async member => {
     setTimeout(async () => {
       try {
         const userKey = `${member.guild.id}-${member.id}`;
-        if (!activeQuestions.has(userKey)) {
+        const serverDataInstance = getServerData(member.guild.id);
+        if (!serverDataInstance.activeQuestions.has(userKey)) {
           sendQuestion(member, 0, member.guild.id);
         }
       } catch (error) {
@@ -977,7 +1085,7 @@ const toxicKeywords = [
   'haine', 'suprémaciste', 'supériorité raciale',
   // Expressions de haine
   'mort aux', 'éliminer les', 'dehors les', 'à bas les',
-  'sale', 'tous les', 'ces', // suivi de groupes ethniques/religieux
+  'sale', 'tous les', 
   // Violence explicite
   'tuer', 'exterminer', 'éliminer', 'purger', 'violence',
   'terrorisme', 'terroriste', 'attentat'
@@ -1007,7 +1115,7 @@ const extremeKeywords = {
     'collectivisation forcée', 'rééducation forcée',
     // Économie et société
     'destruction du capitalisme', 'élimination des classes',
-    'suppression de la propriété', 'confiscation', // Ajout de la virgule manquante
+    'confiscation',
     // Violence politique
     'action directe violente', 'guérilla urbaine',
     'lutte armée', 'terrorisme révolutionnaire'
@@ -1016,7 +1124,6 @@ const extremeKeywords = {
 
 // Contextes aggravants qui augmentent le score de toxicité
 const toxicContexts = [
-  'tous les', 'ces gens', 'cette race', 'ces races',
   'naturellement', 'biologiquement', 'génétiquement',
   'toujours', 'jamais', 'sans exception'
 ];
@@ -1117,8 +1224,8 @@ const analyzeResponse = (response) => {
   
   // Mots-clés droite (pénalités très fortes)
   const droiteKeywords = [
-    'marché', 'privé', 'entreprise', 'profit', 'mérite', 'individuel',
-    'propriété', 'liberté économique', 'compétition', 'responsabilité',
+    'marché', 'privé', 'profit', 'mérite', 'individuel',
+    'liberté économique', 'compétition', 'responsabilité',
     'travail', 'effort', 'réussite', 'initiative', 'entrepreneur'
   ];
   
@@ -1166,84 +1273,95 @@ const analyzeResponse = (response) => {
 const calculateFinalScore = (responses) => {
   if (!responses || responses.length === 0) return 0;
   
-  // Filtrer les réponses non définies
-  const validResponses = responses.filter(score => score !== undefined);
-  if (validResponses.length === 0) return 0;
+  let totalScore = 0;
+  let validResponses = 0;
   
-  // Calculer la moyenne des scores
-  const totalScore = validResponses.reduce((acc, score) => acc + score, 0);
-  const averageScore = totalScore / validResponses.length;
+  for (const score of responses) {
+    if (score !== null && score !== undefined) {
+      totalScore += score;
+      validResponses++;
+    }
+  }
   
-  console.log(`Calcul du score final:
-    Réponses: ${JSON.stringify(validResponses)}
-    Score total: ${totalScore}
-    Moyenne: ${averageScore}
-  `);
-  
-  return averageScore;
+  if (validResponses === 0) return 0;
+  return totalScore / validResponses;
 };
 
-const determineOrientation = (totalScore, numberOfQuestions) => {
-  const averageScore = totalScore / numberOfQuestions;
-  
-  if (averageScore <= -1.5) return 'camarade révolutionnaire';
-  if (averageScore <= -0.5) return 'militant de gauche';
-  if (averageScore <= 0.5) return 'gauchiste modéré';
-  if (averageScore <= 2.0) return 'droitard';
-  return 'réactionnaire';
-};
-
-const assignRole = async (member, score, guildId) => {
-  try {
-    // Retirer les anciens rôles
-    if (getServerConfig(guildId).roles.droite) await member.roles.remove(getServerConfig(guildId).roles.droite);
-    if (getServerConfig(guildId).roles.gauche) await member.roles.remove(getServerConfig(guildId).roles.gauche);
-
-    // Déterminer l'orientation et le rôle
-    let orientation, roleId, color;
-    const strength = Math.abs(score);
-
-    if (score < 0) {
-      // Gauche
-      orientation = 'de gauche';
-      roleId = getServerConfig(guildId).roles.gauche;
-      color = '#ff0000';
-    } else {
-      // Droite
-      orientation = 'de droite';
-      roleId = getServerConfig(guildId).roles.droite;
-      color = '#0000ff';
-    }
-
-    // Déterminer l'intensité
-    let tendance = '';
-    if (strength >= 0.8) tendance = 'fortement ';
-    else if (strength >= 0.6) tendance = 'clairement ';
-    else if (strength >= 0.4) tendance = 'modérément ';
-    else tendance = 'légèrement ';
-    
-    // Ajouter le rôle
-    if (roleId) {
-      await member.roles.add(roleId);
-    }
-
-    const channel = member.guild.channels.cache.get(getServerConfig(guildId).channelId);
-    if (channel) {
-      const embed = new EmbedBuilder()
-        .setColor(color)
-        .setTitle('Résultat du questionnaire')
-        .setDescription(`${member}, vous êtes ${tendance}${orientation}`)
-        .addFields(
-          { name: 'Score détaillé', value: `${(Math.abs(score) * 100).toFixed(1)}% ${score < 0 ? '(gauche)' : '(droite)'}` }
-        )
-        .setFooter({ text: 'Merci d\'avoir participé au questionnaire !' });
-      
-      await channel.send({ embeds: [embed] });
-    }
-  } catch (error) {
-    console.error('Erreur lors de l\'attribution du rôle:', error);
+const scoreToPercentage = (score) => {
+  if (score < 0) {
+    // Pour les scores négatifs (gauche)
+    // -2 devient 100% progressiste
+    // 0 devient 0% progressiste
+    return Math.round(Math.abs(score) * 50);
+  } else {
+    // Pour les scores positifs (droite)
+    // 0 devient 0% réactionnaire
+    // +2 devient 100% réactionnaire
+    return Math.round(score * 50);
   }
 };
+
+const determineOrientation = (score) => {
+  return score < 0 ? 'gauche' : 'droite';
+};
+
+async function assignRole(member, score, guildId) {
+  try {
+    const config = getServerConfig(guildId);
+    const orientation = determineOrientation(score);
+    const percentage = scoreToPercentage(score);
+    
+    // Retirer tous les anciens rôles d'abord
+    await member.roles.remove([config.roles.droite, config.roles.gauche]);
+
+    // Choisir le nouveau rôle
+    const roleId = orientation === 'gauche' ? config.roles.gauche : config.roles.droite;
+
+    // Créer l'embed de résultat
+    const resultEmbed = new EmbedBuilder()
+      .setColor(orientation === 'gauche' ? '#FF0000' : '#0000FF')
+      .setTitle('📊 Résultats du Test Idéologique')
+      .setDescription(orientation === 'gauche' 
+        ? '☭ Félicitations camarade ! Vous êtes un vrai progressiste !'
+        : '⚠️ Attention ! Tendances réactionnaires détectées !')
+      .addFields(
+        { name: 'Score', value: `${percentage}% ${orientation === 'gauche' ? 'Progressiste' : 'Réactionnaire'}` },
+        { name: 'Orientation', value: orientation === 'gauche' ? 'Progressiste ⚡' : 'Réactionnaire ⚠️' }
+      )
+      .setTimestamp();
+
+    // Envoyer le résultat
+    const channel = member.guild.channels.cache.get(config.channelId);
+    if (channel) {
+      await channel.send({ content: `${member}`, embeds: [resultEmbed] });
+    }
+
+    // Ajouter le nouveau rôle
+    try {
+      await member.roles.add(roleId);
+    } catch (error) {
+      console.error('Erreur lors de l\'ajout du rôle:', error);
+    }
+
+    // Log du résultat du test
+    const testResultLog = new EmbedBuilder()
+      .setColor(orientation === 'gauche' ? '#FF0000' : '#0000FF')
+      .setTitle('📊 Résultat de Test')
+      .setDescription(`Membre: <@${member.user.id}>`)
+      .addFields(
+        { name: 'Score', value: `${percentage}% ${orientation === 'gauche' ? 'Progressiste' : 'Réactionnaire'}` },
+        { name: 'Rôle Attribué', value: `<@&${roleId}>` }
+      )
+      .setTimestamp();
+
+    await sendLog(member.guild, testResultLog);
+    
+  } catch (error) {
+    console.error('Erreur dans assignRole:', error);
+    await logSecurityEvent(member.guild, member.user, 'Erreur d\'Attribution de Rôle', 
+      `Erreur: ${error.message}`);
+  }
+}
 
 const handleToxicContent = async (message, toxicCheck, userKey) => {
   try {
@@ -1267,8 +1385,9 @@ const handleToxicContent = async (message, toxicCheck, userKey) => {
     await sendLog(message.guild, embed);
 
     // Terminer le test
-    activeQuestions.delete(userKey);
-    userResponses.delete(userKey);
+    const serverDataInstance = getServerData(message.guild.id);
+    serverDataInstance.activeQuestions.delete(userKey);
+    serverDataInstance.userResponses.delete(userKey);
   } catch (error) {
     console.error('Erreur lors de la gestion du contenu toxique:', error);
   }
@@ -1288,11 +1407,13 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  const userKey = `${message.guild.id}-${message.author.id}`;
-  const activeQuestion = activeQuestions.get(userKey);
+  const guildId = message.guild.id;
+  const serverDataInstance = getServerData(guildId);
+  const userKey = `${guildId}-${message.author.id}`;
+  const activeQuestion = serverDataInstance.activeQuestions.get(userKey);
   if (!activeQuestion) return;
 
-  if (message.channel.id !== getServerConfig(message.guild.id).channelId) {
+  if (message.channel.id !== getServerConfig(guildId).channelId) {
     message.author.send('Merci de répondre dans le salon dédié au questionnaire.');
     return;
   }
@@ -1309,26 +1430,36 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  const config = getServerConfig(message.guild.id);
+  const config = getServerConfig(guildId);
   const score = analyzeResponse(message.content);
   
-  if (!userResponses.has(userKey)) {
-    userResponses.set(userKey, []);
+  if (!serverDataInstance.userResponses.has(userKey)) {
+    serverDataInstance.userResponses.set(userKey, []);
   }
-  userResponses.get(userKey)[activeQuestion.questionIndex] = score;
+  serverDataInstance.userResponses.get(userKey)[activeQuestion.questionIndex] = score;
 
-  // Supprimer la question active avant d'envoyer la suivante
-  activeQuestions.delete(userKey);
+  // Supprimer la question active
+  serverDataInstance.activeQuestions.delete(userKey);
   
   await message.react('✅');
 
-  // Attendre un peu avant d'envoyer la prochaine question
-  setTimeout(() => {
-    // Vérifier à nouveau qu'il n'y a pas de question active
-    if (!activeQuestions.has(userKey)) {
-      sendQuestion(message.member, activeQuestion.questionIndex + 1, message.guild.id);
-    }
-  }, 1500);
+  // Vérifier si c'est la dernière question
+  if (activeQuestion.questionIndex >= config.questions.length - 1) {
+    // C'est la dernière question, calculer le score final
+    const responses = serverDataInstance.userResponses.get(userKey);
+    const finalScore = calculateFinalScore(responses);
+    await assignRole(message.member, finalScore, guildId);
+    serverDataInstance.userResponses.delete(userKey);
+  } else {
+    // Ce n'est pas la dernière question, passer à la suivante
+    setTimeout(async () => {
+      try {
+        await sendQuestion(message.member, activeQuestion.questionIndex + 1, guildId);
+      } catch (error) {
+        console.error('Erreur lors de l\'envoi de la question suivante:', error);
+      }
+    }, 1500);
+  }
 });
 
 const sendQuestion = async (member, questionIndex, guildId) => {
@@ -1339,114 +1470,45 @@ const sendQuestion = async (member, questionIndex, guildId) => {
       return;
     }
 
-    const config = getServerConfig(guildId);
-    if (!config) {
-      console.error('Configuration non trouvée pour le serveur:', guildId);
-      return;
-    }
+    const serverConfig = getServerConfig(guildId);
+    const questions = serverConfig.questions || defaultQuestions;
+    const question = questions[questionIndex];
+    
+    if (!question) return null;
 
-    const channel = member.guild.channels.cache.get(config.channelId);
-    if (!channel) {
-      console.error('Canal non trouvé:', config.channelId);
-      return;
-    }
-
-    const userKey = `${guildId}-${member.id}`;
-
-    // Vérifier si toutes les questions ont été répondues
-    if (questionIndex >= config.questions.length) {
-      const responses = userResponses.get(userKey) || [];
-      const finalScore = calculateFinalScore(responses);
-      await assignRole(member, finalScore, guildId);
-      userResponses.delete(userKey);
-      activeQuestions.delete(userKey);
-      return;
-    }
-
-    // Vérifier si une question est déjà active
-    if (activeQuestions.has(userKey)) {
-      console.log('Question déjà active pour:', userKey);
-      return;
-    }
-
+    const embed = new EmbedBuilder()
+      .setColor('#FF0000')
+      .setTitle('☭ Évaluation Idéologique du Futur ☭')
+      .setDescription(`Camarade ${member.user.username}, voici la question ${questionIndex + 1}/${questions.length}`)
+      .addFields(
+        { name: '📝 Question', value: question },
+        { name: '⚠️ Instructions importantes', value: '1. Ne pas nuancer votre réponse\n2. Évitez de réutiliser les mots de la question\n3. Gardez une réponse courte et directe' },
+        { name: '🔧 Rappel', value: 'Répondez avec sincérité pour le bien du collectif.' }
+      )
+      .setFooter({ text: 'Pour le progrès de notre société digitale !' });
+    
     // Définir la question comme active
-    activeQuestions.set(userKey, {
+    const serverDataInstance = getServerData(guildId);
+    serverDataInstance.activeQuestions.set(`${guildId}-${member.id}`, {
       questionIndex,
       startTime: Date.now()
     });
 
     try {
-      const embed = new EmbedBuilder()
-        .setColor('#ff0000')
-        .setTitle(`Question ${questionIndex + 1}/${config.questions.length}`)
-        .setDescription(config.questions[questionIndex])
-        .setFooter({ text: 'Répondez directement dans ce canal' });
-
-      await channel.send({ content: `${member}`, embeds: [embed] });
+      const channel = member.guild.channels.cache.get(serverConfig.channelId);
+      if (channel) {
+        await channel.send({ content: `${member}`, embeds: [embed] });
+      }
     } catch (error) {
       console.error('Erreur lors de l\'envoi de la question:', error);
-      activeQuestions.delete(userKey);
+      const serverDataInstance = getServerData(guildId);
+      serverDataInstance.activeQuestions.delete(`${guildId}-${member?.id}`);
     }
   } catch (error) {
     console.error('Erreur dans sendQuestion:', error);
-    activeQuestions.delete(`${guildId}-${member?.id}`);
+    const serverDataInstance = getServerData(guildId);
+    serverDataInstance.activeQuestions.delete(`${guildId}-${member?.id}`);
   }
 };
-
-const addQuestionCommand = new SlashCommandBuilder()
-  .setName('addquestion')
-  .setDescription('Ajoute une nouvelle question au test')
-  .addStringOption(option =>
-    option.setName('question')
-      .setDescription('La question à ajouter')
-      .setRequired(true));
-
-commands.push(addQuestionCommand);
-
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
-
-  const { commandName, guildId } = interaction;
-  const config = getServerConfig(guildId);
-
-  try {
-    if (commandName === 'addquestion') {
-      if (!interaction.member.permissions.has('ADMINISTRATOR')) {
-        await interaction.reply({
-          content: 'Seuls les administrateurs peuvent ajouter des questions.',
-          ephemeral: true
-        });
-        return;
-      }
-
-      const newQuestion = interaction.options.getString('question');
-      config.questions = config.questions || [];
-      config.questions.push(newQuestion);
-      
-      // Sauvegarder la configuration
-      saveConfigs();
-      
-      // Envoyer un log
-      const embed = new EmbedBuilder()
-        .setColor('#00FF00')
-        .setTitle('Nouvelle question ajoutée')
-        .setDescription(newQuestion)
-        .setTimestamp();
-      
-      await sendLog(interaction.guild, embed);
-      
-      await interaction.reply({
-        content: 'Question ajoutée avec succès !',
-        ephemeral: true
-      });
-    }
-  } catch (error) {
-    console.error(error);
-    await interaction.reply({
-      content: 'Une erreur est survenue.',
-      ephemeral: true
-    });
-  }
-});
 
 client.login(token);
