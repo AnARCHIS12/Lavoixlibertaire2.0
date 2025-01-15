@@ -1,36 +1,61 @@
 # 🚩 Bot Discord de Test Politique
 
-Un bot Discord qui effectue des tests d'orientation politique avec un biais intentionnel vers l'extrême gauche. ⚔️
+[![Node.js](https://img.shields.io/badge/Node.js-v16%2B-green?logo=node.js)](https://nodejs.org)
+[![Discord.js](https://img.shields.io/badge/Discord.js-v14-blue?logo=discord)](https://discord.js.org)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Status](https://img.shields.io/badge/Status-Active-success.svg)]()
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)]()
+
+> Un bot Discord qui effectue des tests d'orientation politique avec un biais intentionnel vers l'extrême gauche, incluant un système anti-raid et une gestion avancée des configurations par serveur. ⚔️
+
+## 📋 Table des Matières
+- [Fonctionnalités](#-fonctionnalités)
+- [Commandes](#-commandes)
+- [Prérequis](#-prérequis)
+- [Installation](#-installation)
+- [Configuration](#️-configuration)
+- [Système de Scoring](#-système-de-scoring)
+- [Sécurité](#-sécurité)
 
 ## ✨ Fonctionnalités
 
-- 🤖 Test politique automatique pour les nouveaux membres
-- ❓ Questions personnalisables par serveur
+- 🤖 Test politique avec biais idéologique intentionnel
+- ❓ Questions orientées vers l'extrême gauche
 - ⚖️ Système de scoring sophistiqué avec biais idéologique
-- 🎭 Attribution automatique de rôles basée sur les résultats
-- 🛡️ Protection anti-raid et anti-spam
+- 🎭 Attribution automatique des rôles (gauche/droite/quarantaine)
+- 🛡️ Système anti-raid et anti-spam intégré
 - 🔍 Détection de contenu toxique
+- 📊 Configuration flexible par serveur
+- 📝 Logs détaillés des activités
 
-## 🔧 Commandes Slash
+## 🔧 Commandes
 
-### 👑 Commandes Administrateur
-- `/setchannel` : Définit le canal pour les tests
-- `/addquestion` : Ajoute une nouvelle question
-- `/removequestion` : Supprime une question existante
-- `/listquestions` : Liste toutes les questions
-- `/resetquestions` : Réinitialise les questions par défaut
-- `/test [@membre]` : Force un test pour un membre
+### 👑 Administration
+- `/setchannel` : Configure le canal pour les tests
+- `/setroles` : Configure les rôles (gauche/droite/quarantaine)
+- `/status` : Affiche l'état de la configuration
+- `/questions` : Gère les questions du test
 
-### 🔨 Configuration Requise
-- 📦 Node.js v16 ou supérieur
-- 🔑 Un token de bot Discord
-- 🔐 Permissions Discord appropriées (gérer les rôles, les messages, etc.)
+### 🎮 Utilisateur
+- `/start` : Commence le test politique
 
-### 📥 Installation
+## 🔧 Prérequis
+
+- 📦 Node.js v16+
+- 🔑 Token Discord Bot
+- 🔐 Permissions Discord:
+  - Gérer les Rôles
+  - Gérer les Messages
+  - Voir les Salons
+  - Envoyer des Messages
+  - Gérer les Réactions
+
+## 📥 Installation
 
 1. Clonez le repository :
 ```bash
 git clone [url-du-repo]
+cd discord-bot
 ```
 
 2. Installez les dépendances :
@@ -38,45 +63,59 @@ git clone [url-du-repo]
 npm install
 ```
 
-3. Créez un fichier `.env` avec :
-```env
-TOKEN=votre_token_discord
-CLIENT_ID=id_de_votre_bot
+3. Configurez les variables d'environnement :
+```bash
+cp .env.example .env
+# Éditez le fichier .env avec :
+# TOKEN=votre_token_discord
+# CLIENT_ID=id_de_votre_bot
 ```
 
 4. Lancez le bot :
 ```bash
-node index.js
+npm start
 ```
 
 ## ⚙️ Configuration
 
-Le fichier `config.json` contient :
-- 📝 Questions par défaut
-- 📊 Seuils de score
-- ⚖️ Pénalités
-- 🔧 Configuration par serveur
+Le système utilise deux fichiers de configuration principaux :
+
+### 📄 config.json
+- Questions orientées extrême gauche
+- Configuration des rôles
+- Paramètres de scoring
+- Configuration par défaut des serveurs
+
+### 🔐 Configuration par Serveur
+- Canal de test dédié
+- Canal de logs
+- Rôles personnalisés (gauche/droite/quarantaine)
+- Questions personnalisables
+- Statistiques de tests
 
 ## 📈 Système de Scoring
 
 Le système attribue des points selon :
-- ✊ Réponses positives aux questions d'extrême gauche (-2.0 points)
-- 👎 Réponses négatives ou modérées (+3.0 points)
-- 🗣️ Utilisation de vocabulaire d'extrême gauche (-0.5 points par mot)
-- 💰 Utilisation de vocabulaire de droite (+4.0 points par mot)
-- 👑 Utilisation de vocabulaire d'extrême droite (+5.0 points par mot)
+- ✊ Réponses positives aux questions d'extrême gauche
+- 👎 Réponses négatives ou modérées
+- 🗣️ Analyse du vocabulaire utilisé
+- 💭 Cohérence idéologique des réponses
 
-## 🎯 Classifications
+## 🛡️ Sécurité
 
-- ≤ -1.5: "✊ camarade révolutionnaire"
-- ≤ -0.5: "🌹 militant de gauche"
-- ≤ 0.5: "🌿 gauchiste modéré"
-- ≤ 2.0: "💰 droitard"
-- > 2.0: "👑 réactionnaire"
+### 🚫 Système Anti-Raid
+- Limite de nouveaux membres
+- Délai entre les tests
+- Protection contre le spam de commandes
 
-## 🔒 Sécurité
+### 🔍 Modération
+- Détection automatique de contenu toxique
+- Filtrage des réponses inappropriées
+- Logs d'activité détaillés
+- Messages éphémères pour les commandes sensibles
 
-- 🛡️ Protection anti-raid
-- 🔍 Détection de contenu toxique
-- 👀 Messages éphémères pour les commandes sensibles
-- 🔐 Permissions basées sur les rôles
+### 👮 Permissions
+- Système de permissions hiérarchique
+- Commandes administratives protégées
+- Validation des configurations
+# Lavoixlibertaire2.0
