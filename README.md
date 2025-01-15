@@ -119,3 +119,4 @@ Le système attribue des points selon :
 - Commandes administratives protégées
 - Validation des configurations
 # Lavoixlibertaire2.0
+# Lavoixlibertaire2.0
