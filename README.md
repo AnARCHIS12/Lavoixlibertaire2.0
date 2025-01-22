@@ -54,7 +54,7 @@
 
 1. Clonez le repository :
 ```bash
-git clone [url-du-repo]
+git clone https://github.com/AnARCHIS12/Lavoixlibertaire2.0
 cd discord-bot
 ```
 
